@@ -904,6 +904,8 @@ async function aceGenerate(){
   btn.disabled = false;
 }
 $("#aceGo").onclick = aceGenerate;
+// Aperta con doppio clic (file://) o da un sito: punta direttamente ad ACE-Step locale
+if(location.protocol === "file:" || !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) $("#aceUrl").value = "http://localhost:8001";
 
 /* Esporta mix WAV */
 function encodeWav(buf){
