@@ -32,7 +32,23 @@ python serve.py
 
 Apri **http://localhost:8080**. All'avvio viene generato un progetto demo di 8 battute in La minore.
 
-## Collegare ACE-Step 1.5 (generazione AI)
+## Generazione AI senza installare niente (Hugging Face)
+
+Nella scheda **AI · ACE-Step** la sorgente predefinita è **Hugging Face**: la DAW usa la demo
+pubblica [ACE-Step/Ace-Step-v1.5](https://huggingface.co/spaces/ACE-Step/Ace-Step-v1.5) tramite la
+libreria ufficiale `@gradio/client` (caricata da jsDelivr). Basta aprire `index.html` con un doppio clic.
+
+- Funzione chiamata: `/generation_wrapper` (Gradio 6.2). I parametri vengono letti dallo Space a ogni
+  connessione e compilati per etichetta (Music Caption, Lyrics, BPM, Key, Audio Duration…); gli altri
+  restano ai valori predefiniti dello Space.
+- Lo Space usa GPU condivise (ZeroGPU): può esserci coda e c'è un limite giornaliero di minuti.
+  Un token gratuito di Hugging Face (Settings → Access Tokens, tipo *Read*) alza il limite.
+  Il token resta salvato solo nel browser.
+- Non funziona dalla pagina pubblicata su Claude, che blocca i collegamenti a siti esterni.
+- Se gli autori cambiano lo Space, la funzione può smettere di rispondere: in quel caso il campo
+  **Space** permette di puntare a un duplicato (anche il tuo, creato con "Duplicate this Space").
+
+## Collegare ACE-Step 1.5 in locale (generazione AI sul tuo computer)
 
 ACE-Step 1.5 gira in locale con meno di 4 GB di VRAM (GPU NVIDIA consigliata; supporta anche Mac con Apple Silicon).
 

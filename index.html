@@ -199,7 +199,21 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
     </section>
 
     <section class="tabpanel" id="tAce" role="tabpanel" hidden>
-      <label class="lbl">Server ACE-Step
+      <label class="lbl">Dove generare
+        <select id="aceMode">
+          <option value="hf" selected>Hugging Face · gratis, nessuna installazione</option>
+          <option value="local">ACE-Step sul mio computer</option>
+        </select>
+      </label>
+      <div class="row2" id="hfBox">
+        <label class="lbl">Space
+          <input class="txt" id="hfSpace" value="ACE-Step/Ace-Step-v1.5" spellcheck="false">
+        </label>
+        <label class="lbl">Token HF
+          <input class="txt" id="hfToken" type="password" placeholder="facoltativo" autocomplete="off">
+        </label>
+      </div>
+      <label class="lbl" id="localBox" hidden>Server ACE-Step
         <input class="txt" id="aceUrl" value="/ace" spellcheck="false">
       </label>
       <label class="lbl">Descrizione (prompt)
@@ -212,13 +226,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
         <label class="lbl">Durata (s)
           <input class="txt" id="aceDur" type="number" min="10" max="600" value="30">
         </label>
-        <label class="lbl">Chiave API
+        <label class="lbl" id="keyBox" hidden>Chiave API
           <input class="txt" id="aceKey" type="password" placeholder="se attiva" autocomplete="off">
         </label>
       </div>
       <button class="primary" id="aceGo">Genera con ACE-Step</button>
       <div class="aceState" id="aceState">In attesa. BPM e tonalità vengono presi dal progetto.</div>
-      <p class="note">Serve ACE-Step 1.5 avviato sul tuo computer (<code>python -m acestep.api_server</code>, porta 8001) e la DAW aperta con <code>python serve.py</code>, che inoltra le richieste. Istruzioni complete nel README.</p>
+      <p class="note" id="hfNote">Usa la demo pubblica di ACE-Step 1.5 su Hugging Face, che gira su GPU condivise: può esserci coda e c'è un limite di minuti al giorno. Con un token gratuito di Hugging Face (huggingface.co → Settings → Access Tokens, tipo "Read") il limite sale. Il token resta salvato solo in questo browser.</p>
+      <p class="note" id="localNote" hidden>Serve ACE-Step 1.5 avviato sul tuo computer (<code>python -m acestep.api_server</code>, porta 8001) e la DAW aperta con <code>python serve.py</code>, che inoltra le richieste. Istruzioni complete nel README.</p>
     </section>
 
     <section class="tabpanel" id="tImp" role="tabpanel" hidden>
@@ -850,8 +865,74 @@ $("#tl").addEventListener("drop", e => {
 
 /* ACE-Step 1.5: POST /release_task → POST /query_result → GET file */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const lsGet = k => { try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } };
+const lsSet = (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} };
+
+/* --- Hugging Face Space (Gradio) --- */
+const GRADIO_CLIENT = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
+let gradioMod = null;
+async function hfGenerate(body, show){
+  if(!gradioMod){
+    show("Carico il collegamento a Hugging Face…");
+    try{ gradioMod = await import(GRADIO_CLIENT); }
+    catch(e){ throw new Error("Non riesco a scaricare la libreria Gradio. Controlla la connessione a internet."); }
+  }
+  const space = $("#hfSpace").value.trim() || "ACE-Step/Ace-Step-v1.5";
+  const tok = $("#hfToken").value.trim();
+  if(tok && !tok.startsWith("hf_")) throw new Error("Il token di Hugging Face deve iniziare con hf_");
+  lsSet("mb_hfSpace", space); lsSet("mb_hfToken", tok);
+  show(`Mi collego allo Space ${space}…`);
+  let client;
+  try{ client = await gradioMod.Client.connect(space, tok ? { token:tok } : {}); }
+  catch(e){ throw new Error(`Lo Space ${space} non risponde (${e.message || e}). Potrebbe essere in pausa o in manutenzione: riprova tra qualche minuto.`); }
+  const api = await client.view_api();
+  const named = api.named_endpoints || {};
+  const hasLabels = k => { const ls = (named[k].parameters || []).map(p => p.label); return ls.includes("Music Caption") && ls.includes("Lyrics"); };
+  let ep = named["/generation_wrapper"] ? "/generation_wrapper" : Object.keys(named).find(hasLabels);
+  if(!ep) throw new Error("Lo Space non espone più la funzione di generazione attesa: probabilmente è stato aggiornato.");
+  const params = named[ep].parameters;
+  const data = params.map(p => p.parameter_has_default ? p.parameter_default : null);
+  const set = (label, v) => { const i = params.findIndex(p => p.label === label); if(i >= 0) data[i] = v; return i >= 0; };
+  set("Music Caption", body.prompt);
+  set("Lyrics", body.lyrics || "[Instrumental]");
+  if(!body.lyrics) set("Vocal Language", "unknown");
+  set("BPM (Beats Per Minute)", body.bpm);
+  set("Key", body.key_scale);
+  set("Time Signature", "4");
+  set("Audio Duration (seconds)", body.audio_duration);
+  set("Batch Size", 1);
+  set("Audio Format", "wav");
+  set("Random Seed", true);
+  set("AutoGen", false);
+  const t0 = Date.now(); let audio = null;
+  const job = client.submit(ep, data);
+  for await (const m of job){
+    const el = Math.round((Date.now() - t0) / 1000);
+    if(m.type === "status"){
+      if(m.stage === "error"){
+        const msg = String(m.message || "");
+        if(/quota|exceeded|ZeroGPU/i.test(msg)) throw new Error("Hai finito i minuti GPU gratuiti di oggi su Hugging Face. Inserisci un token HF (gratis) per averne di più, oppure riprova domani.\nDettaglio: " + msg);
+        throw new Error(msg || "Lo Space ha restituito un errore.");
+      }
+      if(m.stage === "pending" && m.queue && typeof m.position === "number") show(`In coda su Hugging Face: posizione ${m.position + 1}… ${el} s`);
+      else if(m.stage !== "complete") show(`Generazione in corso su Hugging Face… ${el} s`);
+    }
+    if(m.type === "data" && Array.isArray(m.data)){
+      const a = m.data[0];
+      const u = a && (typeof a === "string" ? a : (a.url || (a.value && a.value.url)));
+      if(u) audio = u;
+    }
+  }
+  if(!audio) throw new Error("La generazione è finita senza audio. Riprova o cambia descrizione.");
+  show("Scarico l'audio…");
+  const r = await fetch(audio, tok ? { headers:{ Authorization:"Bearer " + tok } } : {});
+  if(!r.ok) throw new Error(`Download dell'audio non riuscito (HTTP ${r.status}).`);
+  return r.arrayBuffer();
+}
+
 async function aceGenerate(){
   const box = $("#aceState"), btn = $("#aceGo");
+  if($("#aceMode").value === "hf") return aceGenerateHF();
   const base = $("#aceUrl").value.trim().replace(/\/+$/, "");
   const key = $("#aceKey").value.trim();
   const headers = { "Content-Type":"application/json" }; if(key) headers.Authorization = "Bearer " + key;
@@ -903,7 +984,47 @@ async function aceGenerate(){
   }
   btn.disabled = false;
 }
+function aceBody(){
+  const kNames = ["C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"];
+  return {
+    prompt:$("#acePrompt").value.trim(), lyrics:$("#aceLyrics").value.trim(),
+    audio_duration:Math.min(600, Math.max(10, +$("#aceDur").value || 30)),
+    bpm:S.bpm, key_scale:`${kNames[+$("#gKey").value]} ${$("#gScale").value === "maggiore" ? "major" : "minor"}`
+  };
+}
+async function aceGenerateHF(){
+  const box = $("#aceState"), btn = $("#aceGo");
+  const show = (msg, cls = "") => { box.textContent = msg; box.className = "aceState " + cls; };
+  const body = aceBody();
+  if(!body.prompt){ show("Scrivi una descrizione del brano.", "err"); return; }
+  btn.disabled = true; const t0 = Date.now();
+  try{
+    const ab = await hfGenerate(body, show);
+    const buf = await new OfflineAudioContext(2, 1, SR).decodeAudioData(ab);
+    const name = "AI · " + (body.prompt.split(",")[0] || "ACE-Step").slice(0, 28);
+    const t = newTrack(name); addClip(t, buf, insertPos(), name);
+    render(); restartIfPlaying();
+    show(`Fatto in ${Math.round((Date.now() - t0) / 1000)} s: ${buf.duration.toFixed(1)} s di audio aggiunti.`, "okk");
+    setStatus(`Aggiunto “${name}” da Hugging Face.`);
+  }catch(err){
+    show(err instanceof TypeError && /fetch|network|Failed/i.test(err.message)
+      ? "Connessione con Hugging Face bloccata o assente. Apri la DAW come file sul computer (doppio clic) o con python serve.py: la pagina pubblicata su Claude non può collegarsi a siti esterni."
+      : "Errore: " + err.message, "err");
+  }
+  btn.disabled = false;
+}
 $("#aceGo").onclick = aceGenerate;
+function syncAceMode(){
+  const hf = $("#aceMode").value === "hf";
+  $("#hfBox").hidden = !hf; $("#hfNote").hidden = !hf;
+  $("#localBox").hidden = hf; $("#keyBox").hidden = hf; $("#localNote").hidden = hf;
+  lsSet("mb_aceMode", $("#aceMode").value);
+}
+$("#aceMode").onchange = syncAceMode;
+if(lsGet("mb_aceMode") === "local") $("#aceMode").value = "local";
+if(lsGet("mb_hfSpace")) $("#hfSpace").value = lsGet("mb_hfSpace");
+if(lsGet("mb_hfToken")) $("#hfToken").value = lsGet("mb_hfToken");
+syncAceMode();
 // Aperta con doppio clic (file://) o da un sito: punta direttamente ad ACE-Step locale
 if(location.protocol === "file:" || !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) $("#aceUrl").value = "http://localhost:8001";
 
