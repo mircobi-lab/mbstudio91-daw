@@ -232,6 +232,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
       </div>
       <button class="primary" id="aceGo">Genera con ACE-Step</button>
       <div class="aceState" id="aceState">In attesa. BPM e tonalità vengono presi dal progetto.</div>
+      <button class="ghost" id="aceDiag" hidden>Copia diagnostica</button>
       <p class="note" id="hfNote">Usa la demo pubblica di ACE-Step 1.5 su Hugging Face, che gira su GPU condivise: può esserci coda e c'è un limite di minuti al giorno. Con un token gratuito di Hugging Face (huggingface.co → Settings → Access Tokens, tipo "Read") il limite sale. Il token resta salvato solo in questo browser.</p>
       <p class="note" id="localNote" hidden>Serve ACE-Step 1.5 avviato sul tuo computer (<code>python -m acestep.api_server</code>, porta 8001) e la DAW aperta con <code>python serve.py</code>, che inoltra le richieste. Istruzioni complete nel README.</p>
     </section>
@@ -871,6 +872,8 @@ const lsSet = (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} };
 /* --- Hugging Face Space (Gradio) --- */
 const GRADIO_CLIENT = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
 let gradioMod = null;
+let diag = null;
+const newDiag = () => ({ when:new Date().toISOString(), client:GRADIO_CLIENT.split("@")[2], set:[], missing:[], msgs:{}, logs:[], stages:[] });
 // Regola di Hugging Face per il sottodominio: "Owner/Name.v1_5" -> "owner-name-v1-5.hf.space"
 const spaceUrl = id => "https://" + id.toLowerCase().replace("/", "-").replace(/[._]/g, "-") + ".hf.space/";
 // Cerca il primo file audio in qualunque punto della risposta (lettori, aggiornamenti gr.update, elenco file)
@@ -903,7 +906,7 @@ async function hfGenerate(body, show){
   let client = null, lastErr = null;
   for(const target of targets){
     show(`Mi collego a ${target}…`);
-    try{ client = await gradioMod.Client.connect(target, tok ? { token:tok } : {}); break; }
+    try{ client = await gradioMod.Client.connect(target, tok ? { token:tok, events:["data", "status", "log"] } : { events:["data", "status", "log"] }); break; }
     catch(e){ lastErr = e; }
   }
   if(!client){
@@ -912,27 +915,50 @@ async function hfGenerate(body, show){
   }
   const api = await client.view_api();
   const named = api.named_endpoints || {};
-  const hasLabels = k => { const ls = (named[k].parameters || []).map(p => p.label); return ls.includes("Music Caption") && ls.includes("Lyrics"); };
-  let ep = named["/generation_wrapper"] ? "/generation_wrapper" : Object.keys(named).find(hasLabels);
+  const norm = s => String(s || "").toLowerCase().trim();
+  const labelsOf = k => (named[k].parameters || []).map(p => norm(p.label));
+  const audioReturns = k => (named[k].returns || []).filter(r => /audio/i.test(r.component || "")).length;
+  const isGen = k => { const ls = labelsOf(k); return ls.some(l => l.includes("caption")) && ls.includes("lyrics") && audioReturns(k) > 0; };
+  let ep = named["/generation_wrapper"] ? "/generation_wrapper" : null;
+  if(!ep){
+    const cands = Object.keys(named).filter(isGen).sort((a, b) => audioReturns(b) - audioReturns(a) || named[b].parameters.length - named[a].parameters.length);
+    ep = cands[0] || null;
+  }
+  diag.endpoints = Object.keys(named).length;
   if(!ep) throw new Error("Lo Space non espone più la funzione di generazione attesa: probabilmente è stato aggiornato.");
-  const params = named[ep].parameters;
+  const params = named[ep].parameters, rets = named[ep].returns || [];
+  diag.endpoint = ep; diag.params = params.length; diag.returns = rets.length; diag.audioReturns = audioReturns(ep);
+  const statusIdx = Math.max(0, rets.findIndex(r => norm(r.label) === "status" || norm(r.label).includes("status")));
+  diag.statusIdx = statusIdx;
   const data = params.map(p => p.parameter_has_default ? p.parameter_default : null);
-  const set = (label, v) => { const i = params.findIndex(p => p.label === label); if(i >= 0) data[i] = v; return i >= 0; };
-  set("Music Caption", body.prompt);
-  set("Lyrics", body.lyrics || "[Instrumental]");
-  if(!body.lyrics) set("Vocal Language", "unknown");
-  set("BPM (Beats Per Minute)", body.bpm);
-  set("Key", body.key_scale);
-  set("Time Signature", "4");
-  set("Audio Duration (seconds)", body.audio_duration);
-  set("Batch Size", 1);
-  set("Audio Format", "wav");
-  set("Random Seed", true);
-  set("AutoGen", false);
+  // Trova il parametro per etichetta: prima uguale, poi "inizia con" (le versioni dello Space cambiano le etichette)
+  const set = (names, v) => {
+    for(const n of names){
+      let i = params.findIndex(p => norm(p.label) === n);
+      if(i < 0) i = params.findIndex(p => norm(p.label).startsWith(n));
+      if(i >= 0){ data[i] = v; diag.set.push(params[i].label); return true; }
+    }
+    diag.missing.push(names[0]); return false;
+  };
+  set(["music caption", "caption", "prompt", "tags"], body.prompt);
+  set(["lyrics"], body.lyrics || "[Instrumental]");
+  if(!body.lyrics) set(["vocal language"], "unknown");
+  set(["bpm"], body.bpm);
+  set(["key", "keyscale", "key scale"], body.key_scale);
+  set(["time signature"], "4");
+  set(["audio duration", "duration"], body.audio_duration);
+  set(["batch size"], 1);
+  set(["audio format"], "wav");
+  set(["random seed"], true);
+  set(["autogen"], false);
+  diag.nulls = params.filter((p, i) => data[i] === null).map(p => p.label).slice(0, 12);
   const t0 = Date.now(); let audio = null, lastData = null, spaceStatus = "";
-  const job = client.submit(ep, data);
+  const job = client.submit(ep, data, undefined, undefined, true);
   for await (const m of job){
     const el = Math.round((Date.now() - t0) / 1000);
+    diag.msgs[m.type] = (diag.msgs[m.type] || 0) + 1;
+    if(m.type === "log" && m.log) diag.logs.push(`${m.level || "info"}: ${String(m.log).slice(0, 200)}`);
+    if(m.type === "status" && m.stage) { if(diag.stages[diag.stages.length - 1] !== m.stage) diag.stages.push(m.stage); if(m.message) diag.logs.push("status: " + String(m.message).slice(0, 200)); }
     if(m.type === "status"){
       if(m.stage === "error"){
         const msg = String(m.message || "");
@@ -946,16 +972,18 @@ async function hfGenerate(body, show){
       lastData = m.data;
       const u = findAudioUrl(m.data);
       if(u) audio = u;
-      const st = m.data[10], val = st && typeof st === "object" ? st.value : st;
+      const st = m.data[statusIdx], val = st && typeof st === "object" ? st.value : st;
       if(typeof val === "string" && val.trim()) spaceStatus = val.trim();
       if(spaceStatus) show(`Hugging Face: ${spaceStatus.slice(0, 120)}… ${el} s`);
     }
   }
   if(!audio){
-    console.warn("[MBStudio91] Risposta dello Space senza audio:", lastData);
-    const info = lastData && (typeof lastData[9] === "string" ? lastData[9] : lastData[9] && lastData[9].value);
-    throw new Error("Lo Space ha finito senza restituire audio.\nMessaggio dello Space: " + (spaceStatus || "nessuno")
-      + (info ? "\nDettagli: " + String(info).replace(/[#*`]/g, "").trim().slice(0, 400) : ""));
+    console.warn("[MBStudio91] Risposta dello Space senza audio:", lastData, diag);
+    diag.lastData = lastData ? JSON.stringify(lastData).slice(0, 600) : null;
+    const warn = diag.logs.filter(l => !/^info/i.test(l)).join(" | ");
+    throw new Error("Lo Space ha finito senza restituire audio.\nMessaggio dello Space: "
+      + (warn ? warn + (spaceStatus ? `\nUltimo stato: ${spaceStatus}` : "") : (spaceStatus || "nessuno"))
+      + "\nPremi «Copia diagnostica» e incolla il testo nella chat con Claude.");
   }
   show("Scarico l'audio…");
   const r = await fetch(audio, tok ? { headers:{ Authorization:"Bearer " + tok } } : {});
@@ -1031,6 +1059,7 @@ async function aceGenerateHF(){
   const body = aceBody();
   if(!body.prompt){ show("Scrivi una descrizione del brano.", "err"); return; }
   btn.disabled = true; const t0 = Date.now();
+  diag = newDiag(); $("#aceDiag").hidden = true;
   try{
     const ab = await hfGenerate(body, show);
     const buf = await new OfflineAudioContext(2, 1, SR).decodeAudioData(ab);
@@ -1043,10 +1072,17 @@ async function aceGenerateHF(){
     show(err instanceof TypeError && /fetch|network|Failed/i.test(err.message)
       ? "Connessione con Hugging Face bloccata o assente. Apri la DAW come file sul computer (doppio clic) o con python serve.py: la pagina pubblicata su Claude non può collegarsi a siti esterni."
       : "Errore: " + err.message, "err");
+    if(diag){ diag.error = String(err.message || err).slice(0, 300); $("#aceDiag").hidden = false; }
   }
   btn.disabled = false;
 }
 $("#aceGo").onclick = aceGenerate;
+$("#aceDiag").onclick = async () => {
+  const txt = "MBStudio91 diagnostica HF\n" + JSON.stringify(diag, null, 1);
+  try{ await navigator.clipboard.writeText(txt); $("#aceDiag").textContent = "Copiata: incollala nella chat"; }
+  catch(e){ const box = $("#aceState"); box.textContent = txt; const r = document.createRange(); r.selectNodeContents(box); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("#aceDiag").textContent = "Testo selezionato: premi Ctrl+C"; }
+  setTimeout(() => { $("#aceDiag").textContent = "Copia diagnostica"; }, 4000);
+};
 function syncAceMode(){
   const hf = $("#aceMode").value === "hf";
   $("#hfBox").hidden = !hf; $("#hfNote").hidden = !hf;
