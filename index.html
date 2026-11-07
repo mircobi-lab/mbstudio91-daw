@@ -873,6 +873,18 @@ const GRADIO_CLIENT = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/br
 let gradioMod = null;
 // Regola di Hugging Face per il sottodominio: "Owner/Name.v1_5" -> "owner-name-v1-5.hf.space"
 const spaceUrl = id => "https://" + id.toLowerCase().replace("/", "-").replace(/[._]/g, "-") + ".hf.space/";
+// Cerca il primo file audio in qualunque punto della risposta (lettori, aggiornamenti gr.update, elenco file)
+const AUDIO_RX = /\.(wav|mp3|flac|ogg|opus|aac|m4a)(\?|$)/i;
+function findAudioUrl(x, depth = 0){
+  if(!x || depth > 5) return null;
+  if(Array.isArray(x)){ for(const v of x){ const u = findAudioUrl(v, depth + 1); if(u) return u; } return null; }
+  if(typeof x === "object"){
+    const u = x.url || null, p = x.path || x.orig_name || "";
+    if(u && (AUDIO_RX.test(p) || AUDIO_RX.test(u) || /^audio\//.test(x.mime_type || ""))) return u;
+    for(const k of ["value", "data", "files"]) if(k in x){ const r = findAudioUrl(x[k], depth + 1); if(r) return r; }
+  }
+  return null;
+}
 const inClaudeViewer = () => /claude/i.test(location.hostname) || /claude\.ai/i.test(document.referrer);
 async function hfGenerate(body, show){
   if(inClaudeViewer()) throw new Error("Questa è la pagina pubblicata su Claude, che blocca i collegamenti a siti esterni come Hugging Face. Usa il file MBStudio91-DAW.html scaricato sul computer e aprilo con un doppio clic.");
@@ -917,7 +929,7 @@ async function hfGenerate(body, show){
   set("Audio Format", "wav");
   set("Random Seed", true);
   set("AutoGen", false);
-  const t0 = Date.now(); let audio = null;
+  const t0 = Date.now(); let audio = null, lastData = null, spaceStatus = "";
   const job = client.submit(ep, data);
   for await (const m of job){
     const el = Math.round((Date.now() - t0) / 1000);
@@ -931,12 +943,20 @@ async function hfGenerate(body, show){
       else if(m.stage !== "complete") show(`Generazione in corso su Hugging Face… ${el} s`);
     }
     if(m.type === "data" && Array.isArray(m.data)){
-      const a = m.data[0];
-      const u = a && (typeof a === "string" ? a : (a.url || (a.value && a.value.url)));
+      lastData = m.data;
+      const u = findAudioUrl(m.data);
       if(u) audio = u;
+      const st = m.data[10], val = st && typeof st === "object" ? st.value : st;
+      if(typeof val === "string" && val.trim()) spaceStatus = val.trim();
+      if(spaceStatus) show(`Hugging Face: ${spaceStatus.slice(0, 120)}… ${el} s`);
     }
   }
-  if(!audio) throw new Error("La generazione è finita senza audio. Riprova o cambia descrizione.");
+  if(!audio){
+    console.warn("[MBStudio91] Risposta dello Space senza audio:", lastData);
+    const info = lastData && (typeof lastData[9] === "string" ? lastData[9] : lastData[9] && lastData[9].value);
+    throw new Error("Lo Space ha finito senza restituire audio.\nMessaggio dello Space: " + (spaceStatus || "nessuno")
+      + (info ? "\nDettagli: " + String(info).replace(/[#*`]/g, "").trim().slice(0, 400) : ""));
+  }
   show("Scarico l'audio…");
   const r = await fetch(audio, tok ? { headers:{ Authorization:"Bearer " + tok } } : {});
   if(!r.ok) throw new Error(`Download dell'audio non riuscito (HTTP ${r.status}).`);
