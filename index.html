@@ -931,30 +931,65 @@ async function hfGenerate(body, show){
   const statusIdx = Math.max(0, rets.findIndex(r => norm(r.label) === "status" || norm(r.label).includes("status")));
   diag.statusIdx = statusIdx;
   const data = params.map(p => p.parameter_has_default ? p.parameter_default : null);
+  // Scelte ammesse di un campo a tendina: da type.enum oppure dal testo "Literal['mp3', 'flac']"
+  function choicesOf(p){
+    if(p.type && Array.isArray(p.type.enum)) return p.type.enum.map(String);
+    const lit = /^Literal\[(.*)\]$/s.exec((p.python_type && p.python_type.type) || "");
+    if(!lit) return null;
+    const out = []; const rx = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|(-?\d+(?:\.\d+)?)/g; let mm;
+    while((mm = rx.exec(lit[1]))) out.push(mm[1] ?? mm[2] ?? mm[3]);
+    return out.length ? out : null;
+  }
   // Trova il parametro per etichetta: prima uguale, poi "inizia con" (le versioni dello Space cambiano le etichette)
   const set = (names, v) => {
     for(const n of names){
       let i = params.findIndex(p => norm(p.label) === n);
       if(i < 0) i = params.findIndex(p => norm(p.label).startsWith(n));
-      if(i >= 0){ data[i] = v; diag.set.push(params[i].label); return true; }
+      if(i >= 0){
+        const en = choicesOf(params[i]);
+        // Campo a scelta: v può essere un elenco di preferenze; si usa la prima ammessa dallo Space
+        if(Array.isArray(v)){ const ok = en ? v.find(x => en.includes(x)) : v[0]; if(ok === undefined){ diag.set.push(params[i].label + "=predefinito"); return true; } v = ok; }
+        else if(en && !en.includes(v)){ diag.set.push(params[i].label + "=predefinito"); return true; }
+        data[i] = v; diag.set.push(params[i].label + "=" + String(v).slice(0, 20)); return true;
+      }
     }
     diag.missing.push(names[0]); return false;
   };
   set(["music caption", "caption", "prompt", "tags"], body.prompt);
   set(["lyrics"], body.lyrics || "[Instrumental]");
-  if(!body.lyrics) set(["vocal language"], "unknown");
+  if(!body.lyrics) set(["vocal language"], ["unknown", "instrumental"]);
   set(["bpm"], body.bpm);
   set(["key", "keyscale", "key scale"], body.key_scale);
-  set(["time signature"], "4");
+  set(["time signature"], ["4", "4/4"]);
   set(["audio duration", "duration"], body.audio_duration);
   set(["batch size"], 1);
-  set(["audio format"], "wav");
+  set(["audio format"], ["wav", "flac", "mp3"]);
   set(["random seed"], true);
   set(["autogen"], false);
   diag.nulls = params.filter((p, i) => data[i] === null).map(p => p.label).slice(0, 12);
   const t0 = Date.now(); let audio = null, lastData = null, spaceStatus = "";
-  const job = client.submit(ep, data, undefined, undefined, true);
-  for await (const m of job){
+  // Esegue la richiesta; se lo Space rifiuta un valore ("Value: x is not in the list of choices: [...]")
+  // lo sostituisce con la prima scelta ammessa e riprova (al massimo 3 volte)
+  for(let attempt = 0; attempt < 4; attempt++){
+    let rejected = null;
+    const job = client.submit(ep, data, undefined, undefined, true);
+    for await (const m of job){
+      if(m.type === "status" && m.stage === "error" && attempt < 3){
+        const mm = /Value:\s*(.+?) is not in the list of choices:\s*\[(.*)\]/s.exec(String(m.message || ""));
+        if(mm){ rejected = mm; diag.msgs.status = (diag.msgs.status || 0) + 1; diag.logs.push("status: " + String(m.message).slice(0, 200)); break; }
+      }
+      handle(m);
+    }
+    if(!rejected) break;
+    const bad = rejected[1].trim().replace(/^['"]|['"]$/g, "");
+    const allowed = choicesOf({ python_type:{ type:`Literal[${rejected[2]}]` } }) || [];
+    let idx = params.findIndex((p, i) => String(data[i]) === bad && /dropdown|radio/i.test(p.component || ""));
+    if(idx < 0) idx = data.findIndex(x => String(x) === bad);
+    if(idx < 0 || !allowed.length) throw new Error(`Lo Space non accetta il valore "${bad}". Scelte ammesse: ${allowed.join(", ") || "sconosciute"}.`);
+    data[idx] = allowed[0]; diag.logs.push(`riprovo con ${params[idx].label}=${allowed[0]}`);
+    show(`Lo Space non accetta "${bad}" per ${params[idx].label}: riprovo con "${allowed[0]}"…`);
+  }
+  function handle(m){
     const el = Math.round((Date.now() - t0) / 1000);
     diag.msgs[m.type] = (diag.msgs[m.type] || 0) + 1;
     if(m.type === "log" && m.log) diag.logs.push(`${m.level || "info"}: ${String(m.log).slice(0, 200)}`);
