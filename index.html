@@ -871,7 +871,11 @@ const lsSet = (k, v) => { try{ localStorage.setItem(k, v); }catch(e){} };
 /* --- Hugging Face Space (Gradio) --- */
 const GRADIO_CLIENT = "https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js";
 let gradioMod = null;
+// Regola di Hugging Face per il sottodominio: "Owner/Name.v1_5" -> "owner-name-v1-5.hf.space"
+const spaceUrl = id => "https://" + id.toLowerCase().replace("/", "-").replace(/[._]/g, "-") + ".hf.space/";
+const inClaudeViewer = () => /claude/i.test(location.hostname) || /claude\.ai/i.test(document.referrer);
 async function hfGenerate(body, show){
+  if(inClaudeViewer()) throw new Error("Questa è la pagina pubblicata su Claude, che blocca i collegamenti a siti esterni come Hugging Face. Usa il file MBStudio91-DAW.html scaricato sul computer e aprilo con un doppio clic.");
   if(!gradioMod){
     show("Carico il collegamento a Hugging Face…");
     try{ gradioMod = await import(GRADIO_CLIENT); }
@@ -881,10 +885,19 @@ async function hfGenerate(body, show){
   const tok = $("#hfToken").value.trim();
   if(tok && !tok.startsWith("hf_")) throw new Error("Il token di Hugging Face deve iniziare con hf_");
   lsSet("mb_hfSpace", space); lsSet("mb_hfToken", tok);
-  show(`Mi collego allo Space ${space}…`);
-  let client;
-  try{ client = await gradioMod.Client.connect(space, tok ? { token:tok } : {}); }
-  catch(e){ throw new Error(`Lo Space ${space} non risponde (${e.message || e}). Potrebbe essere in pausa o in manutenzione: riprova tra qualche minuto.`); }
+  // Prima l'indirizzo diretto *.hf.space (non passa dall'API di huggingface.co), poi il nome "proprietario/space"
+  const targets = [];
+  if(/^[\w.-]+\/[\w.-]+$/.test(space)) targets.push(spaceUrl(space), space); else targets.push(space);
+  let client = null, lastErr = null;
+  for(const target of targets){
+    show(`Mi collego a ${target}…`);
+    try{ client = await gradioMod.Client.connect(target, tok ? { token:tok } : {}); break; }
+    catch(e){ lastErr = e; }
+  }
+  if(!client){
+    const detail = (lastErr && (lastErr.message || lastErr)) || "nessuna risposta";
+    throw new Error(`Non riesco a raggiungere lo Space (${String(detail).trim()}).\nProva ad aprire ${targets[0]} nel browser: se si apre la pagina di ACE-Step, il problema è un blocco del browser (estensioni come AdBlock o uBlock, antivirus, rete aziendale); se non si apre, lo Space è fermo e conviene riprovare più tardi.`);
+  }
   const api = await client.view_api();
   const named = api.named_endpoints || {};
   const hasLabels = k => { const ls = (named[k].parameters || []).map(p => p.label); return ls.includes("Music Caption") && ls.includes("Lyrics"); };
