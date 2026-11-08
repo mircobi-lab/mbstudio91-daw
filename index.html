@@ -72,6 +72,20 @@ textarea{height:auto;min-height:64px;padding:8px;resize:vertical;line-height:1.4
 .btnrow{display:flex;gap:8px}
 .btnrow>*{flex:1}
 .note{font-size:12px;line-height:1.5;color:var(--muted);margin:0}
+.lab-warn{border:1px solid color-mix(in srgb,var(--solo) 55%,var(--line));background:color-mix(in srgb,var(--solo) 8%,var(--panel));border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.5;margin:0}
+.lab-warn b{color:var(--solo)}
+.gpu{font-family:var(--f-mono);font-size:11.5px;line-height:1.5;color:var(--muted);background:#0f1217;border:1px solid var(--line);border-radius:7px;padding:8px 10px;white-space:pre-wrap}
+.mcard{border:1px solid var(--line);border-radius:9px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--raised)}
+.mcard h3{margin:0;font-family:var(--f-display);font-size:14px;font-weight:600;letter-spacing:.03em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lic{font-family:var(--f-mono);font-size:10.5px;font-weight:500;padding:2px 7px;border-radius:99px;border:1px solid}
+.lic.free{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 60%,transparent)}
+.lic.nc{color:var(--solo);border-color:color-mix(in srgb,var(--solo) 60%,transparent)}
+.mspec{font-size:11.5px;color:var(--muted);line-height:1.45;margin:0}
+.fit{font-size:11.5px;font-weight:600}
+.fit.ok{color:var(--ok)} .fit.warn{color:var(--solo)} .fit.no{color:var(--danger)}
+.mrow{display:flex;gap:8px}
+.mrow>*{flex:1}
+a.ghost{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;color:var(--fg)}
 .note code{font-family:var(--f-mono);font-size:11.5px;color:var(--fg);background:#0f1217;padding:1px 5px;border-radius:4px}
 .drop{border:1.5px dashed var(--line);border-radius:10px;padding:22px 12px;text-align:center;color:var(--muted);line-height:1.5}
 .drop.over{border-color:var(--accent);color:var(--fg)}
@@ -151,7 +165,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
   <aside class="pane gen" aria-label="Sorgenti">
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-tab="tGen" id="tabGen">Generatore</button>
-      <button role="tab" aria-selected="false" data-tab="tAce" id="tabAce">AI · ACE-Step</button>
+      <button role="tab" aria-selected="false" data-tab="tAce" id="tabAce">AI</button>
+      <button role="tab" aria-selected="false" data-tab="tLab" id="tabLab">Lab</button>
       <button role="tab" aria-selected="false" data-tab="tImp" id="tabImp">Importa</button>
     </div>
 
@@ -235,6 +250,19 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:2px 0;width:100%}
       <button class="ghost" id="aceDiag" hidden>Copia diagnostica</button>
       <p class="note" id="hfNote">Usa la demo pubblica di ACE-Step 1.5 su Hugging Face, che gira su GPU condivise: può esserci coda e c'è un limite di minuti al giorno. Con un token gratuito di Hugging Face (huggingface.co → Settings → Access Tokens, tipo "Read") il limite sale. Il token resta salvato solo in questo browser.</p>
       <p class="note" id="localNote" hidden>Serve ACE-Step 1.5 avviato sul tuo computer (<code>python -m acestep.api_server</code>, porta 8001) e la DAW aperta con <code>python serve.py</code>, che inoltra le richieste. Istruzioni complete nel README.</p>
+    </section>
+
+    <section class="tabpanel" id="tLab" role="tabpanel" hidden>
+      <p class="lab-warn"><b>Solo a scopo di studio.</b> YuE2 e MiniMax-Music3 sono rilasciati con licenze non commerciali. Per qualunque uso commerciale servono licenze a pagamento rilasciate dai rispettivi autori, non legate a MBStudio91. MBStudio91 non ottiene alcun guadagno da questo progetto, nemmeno dalla pubblicità.</p>
+      <button class="ghost" id="gpuCheck">Controlla la scheda video</button>
+      <div class="gpu" id="gpuInfo">Premi il pulsante per sapere quali modelli può far girare questo computer.</div>
+      <div id="labCards"></div>
+      <label class="lbl">Importa un brano generato nel Lab
+        <select id="labSrc"></select>
+      </label>
+      <button class="primary" id="labImp">Scegli il file e importa</button>
+      <input id="labFile" type="file" accept="audio/*" hidden>
+      <p class="note">Ogni modello si apre nella sua pagina, scarica i pesi una sola volta (restano nella cache del browser) e genera sulla tua scheda video. Scarica il brano e importalo qui: la traccia riporta il nome del modello e la licenza.</p>
     </section>
 
     <section class="tabpanel" id="tImp" role="tabpanel" hidden>
@@ -851,6 +879,70 @@ async function importFiles(files, at){
   }
   if(n){ render(); restartIfPlaying(); setStatus(`${n} file importati.`); }
 }
+/* ================= Lab: modelli che girano nel browser (WebGPU) ================= */
+const LAB = [
+  { id:"acestep", name:"ACE-Step 1.5", lic:"Apache 2.0", nc:false, url:"https://huggingface.co/spaces/shreyask/ace-step-webgpu",
+    spec:"Circa 2 GB da scaricare · consigliati 4 GB di RAM libera · Chrome/Edge 113+, Safari 26+ desktop", vramGB:4, f16:false, chrome:113,
+    src:"https://huggingface.co/spaces/shreyask/ace-step-webgpu/blob/main/README.md" },
+  { id:"yue2", name:"YuE2 3B", lic:"CC BY-NC 4.0", nc:true, url:"https://huggingface.co/spaces/mrfakename/yue2-webgpu",
+    spec:"Circa 2,1 GB (pesi q4) · canzoni complete con voce · generazione lenta (nell'ordine dei minuti)", vramGB:8, f16:false, chrome:113,
+    src:"https://huggingface.co/mrfakename/YuE2-3B-ONNX" },
+  { id:"minimax", name:"MiniMax-Music3", lic:"Non commerciale", nc:true, url:"https://li-na.github.io/minimax-music3-webgpu/",
+    spec:"Circa 8 GB da scaricare · 12 GB di memoria video fino a 1 minuto, 16 GB per brani lunghi · solo Chrome desktop 151+ con shader-f16", vramGB:12, f16:true, chrome:151,
+    src:"https://huggingface.co/hyung778/minimax-music3-webgpu" }
+];
+let gpuReport = null;
+function renderLab(){
+  $("#labCards").innerHTML = LAB.map(m => {
+    let fit = "";
+    if(gpuReport){
+      const r = gpuReport;
+      if(!r.ok) fit = '<span class="fit no">WebGPU non disponibile: questo modello non può girare qui.</span>';
+      else if(m.f16 && !r.f16) fit = '<span class="fit no">Manca il supporto shader-f16 richiesto.</span>';
+      else if(r.chrome && r.chrome < m.chrome) fit = `<span class="fit no">Serve Chrome ${m.chrome} o successivo (hai ${r.chrome}).</span>`;
+      else if(r.bufGB < Math.min(2, m.vramGB / 4)) fit = '<span class="fit warn">Memoria video probabilmente insufficiente: provalo, ma potrebbe bloccarsi.</span>';
+      else fit = `<span class="fit ok">Requisiti di base presenti. La memoria video reale si scopre solo provando (servono circa ${m.vramGB} GB).</span>`;
+    }
+    return `<div class="mcard"><h3>${m.name}<span class="lic ${m.nc ? "nc" : "free"}">${m.lic}</span></h3>
+      <p class="mspec">${m.spec}</p>${fit}
+      <div class="mrow"><a class="ghost" href="${m.url}" target="_blank" rel="noopener">Apri il generatore</a><a class="ghost" href="${m.src}" target="_blank" rel="noopener">Scheda e licenza</a></div></div>`;
+  }).join("");
+  $("#labSrc").innerHTML = LAB.map(m => `<option value="${m.id}">${m.name} · ${m.lic}</option>`).join("");
+}
+async function checkGPU(){
+  const box = $("#gpuInfo"), chromeV = +((/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
+  box.textContent = "Controllo in corso…";
+  const r = { ok:false, f16:false, bufGB:0, chrome:chromeV, vendor:"" };
+  try{
+    if(!navigator.gpu) throw new Error("Il browser non espone WebGPU.");
+    const ad = await navigator.gpu.requestAdapter({ powerPreference:"high-performance" });
+    if(!ad) throw new Error("Nessuna scheda video compatibile WebGPU trovata.");
+    r.ok = true; r.f16 = ad.features.has("shader-f16");
+    r.bufGB = Math.max(ad.limits.maxBufferSize || 0, ad.limits.maxStorageBufferBindingSize || 0) / 2 ** 30;
+    const info = ad.info || (ad.requestAdapterInfo ? await ad.requestAdapterInfo() : {});
+    r.vendor = [info.vendor, info.architecture, info.description].filter(Boolean).join(" ");
+    box.textContent = `WebGPU: disponibile\nScheda: ${r.vendor || "non dichiarata dal browser"}\nshader-f16: ${r.f16 ? "sì" : "no"}\nBuffer massimo: ${r.bufGB.toFixed(1)} GB\nBrowser: ${chromeV ? "Chrome/Edge " + chromeV : "non Chromium"}\nLa memoria video totale non è leggibile dal browser.`;
+  }catch(e){
+    box.textContent = `WebGPU: non disponibile\n${e.message}\nUsa Chrome o Edge aggiornati su computer desktop e attiva l'accelerazione hardware.`;
+  }
+  gpuReport = r; renderLab();
+}
+$("#gpuCheck").onclick = checkGPU;
+$("#labImp").onclick = () => $("#labFile").click();
+$("#labFile").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+  const m = LAB.find(x => x.id === $("#labSrc").value);
+  try{
+    setStatus(`Importo ${f.name}…`);
+    const buf = await new OfflineAudioContext(2, 1, SR).decodeAudioData(await f.arrayBuffer());
+    const name = `${m.name}${m.nc ? " · solo studio" : ""} · ${f.name.replace(/\.[^.]+$/, "")}`.slice(0, 60);
+    const t = newTrack(name); t.license = m.lic; t.nc = m.nc; addClip(t, buf, insertPos(), name);
+    render(); restartIfPlaying();
+    setStatus(`Importato “${name}” (${m.lic}).`);
+  }catch(err){ setStatus(`Impossibile leggere ${f.name}: formato non supportato dal browser.`); }
+};
+renderLab();
+
 $("#fileIn").onchange = e => { importFiles([...e.target.files]); e.target.value = ""; };
 const drop = $("#drop");
 ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
@@ -1165,7 +1257,10 @@ $("#bExport").onclick = async () => {
   const blob = encodeWav(out), url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = `MBStudio91-mix-${S.bpm}bpm.wav`; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  setStatus(`Mix pronto: ${out.duration.toFixed(1)} s, WAV 16 bit 44,1 kHz. Se il download non parte, apri la DAW in locale.`);
+  const nc = [...new Set(S.tracks.filter(t => t.nc && audible(t) && t.clips.length).map(t => t.name.split(" · ")[0]))];
+  setStatus(`Mix pronto: ${out.duration.toFixed(1)} s, WAV 16 bit 44,1 kHz.` + (nc.length
+    ? ` Attenzione: contiene audio di ${nc.join(", ")} con licenza non commerciale, solo per studio.`
+    : " Se il download non parte, apri la DAW in locale."));
 };
 
 /* ================= Controlli ================= */

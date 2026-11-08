@@ -48,6 +48,31 @@ libreria ufficiale `@gradio/client` (caricata da jsDelivr). Basta aprire `index.
 - Se gli autori cambiano lo Space, la funzione può smettere di rispondere: in quel caso il campo
   **Space** permette di puntare a un duplicato (anche il tuo, creato con "Duplicate this Space").
 
+## Lab: modelli che girano nel browser (solo studio)
+
+> **Solo a scopo di studio.** YuE2 e MiniMax-Music3 sono rilasciati con licenze non commerciali.
+> Per qualunque uso commerciale servono licenze a pagamento rilasciate dai rispettivi autori,
+> non legate a MBStudio91. MBStudio91 non ottiene alcun guadagno da questo progetto, nemmeno dalla pubblicità.
+
+La scheda **Lab** raccoglie i generatori che girano interamente nel browser con WebGPU, sulla scheda
+video del computer, senza server e senza Python:
+
+| Modello | Generatore | Download | Requisiti | Licenza |
+|---|---|---|---|---|
+| ACE-Step 1.5 | [shreyask/ace-step-webgpu](https://huggingface.co/spaces/shreyask/ace-step-webgpu) | ~2 GB | ~4 GB RAM libera, Chrome/Edge 113+, Safari 26+ | Apache 2.0 |
+| YuE2 3B | [mrfakename/yue2-webgpu](https://huggingface.co/spaces/mrfakename/yue2-webgpu) | ~2,1 GB (q4) | WebGPU | CC BY-NC 4.0 |
+| MiniMax-Music3 | [li-na.github.io/minimax-music3-webgpu](https://li-na.github.io/minimax-music3-webgpu/) | ~8 GB | 12–16 GB VRAM, Chrome 151+ con shader-f16 | MiniMax-Music3 Community License (non commerciale) |
+
+- **Controlla la scheda video** verifica WebGPU, shader-f16, dimensione massima dei buffer e versione del browser.
+  La memoria video totale non è leggibile dal browser: per i modelli grandi l'unica prova certa è avviarli.
+- Il brano scaricato dal generatore si importa con **Scegli il file e importa**: la traccia riporta modello e
+  licenza, e l'export del mix avvisa se contiene audio con licenza non commerciale.
+- MiniMax richiede di dichiarare come generato dall'AI l'audio diffuso pubblicamente.
+
+Fonti: [ACE-Step WebGPU](https://huggingface.co/spaces/shreyask/ace-step-webgpu/blob/main/README.md) ·
+[YuE2 ONNX](https://huggingface.co/mrfakename/YuE2-3B-ONNX) ·
+[MiniMax-Music3 WebGPU](https://huggingface.co/hyung778/minimax-music3-webgpu)
+
 ## Collegare ACE-Step 1.5 in locale (generazione AI sul tuo computer)
 
 ACE-Step 1.5 gira in locale con meno di 4 GB di VRAM (GPU NVIDIA consigliata; supporta anche Mac con Apple Silicon).
