@@ -885,7 +885,7 @@ const LAB = [
     spec:"Circa 2 GB da scaricare · consigliati 4 GB di RAM libera · Chrome/Edge 113+, Safari 26+ desktop", vramGB:4, f16:false, chrome:113,
     src:"https://huggingface.co/spaces/shreyask/ace-step-webgpu/blob/main/README.md" },
   { id:"yue2", name:"YuE2 3B", lic:"CC BY-NC 4.0", nc:true, url:"https://huggingface.co/spaces/mrfakename/yue2-webgpu",
-    spec:"Circa 2,1 GB (pesi q4) · canzoni complete con voce · generazione lenta (nell'ordine dei minuti)", vramGB:8, f16:false, chrome:113,
+    spec:"Circa 2,1 GB (pesi q4) · canzoni complete con voce · generazione lenta (nell'ordine dei minuti) · memoria video necessaria non dichiarata per questa versione", vramGB:8, vramEstimate:true, f16:false, chrome:113,
     src:"https://huggingface.co/mrfakename/YuE2-3B-ONNX" },
   { id:"minimax", name:"MiniMax-Music3", lic:"Non commerciale", nc:true, url:"https://li-na.github.io/minimax-music3-webgpu/",
     spec:"Circa 8 GB da scaricare · 12 GB di memoria video fino a 1 minuto, 16 GB per brani lunghi · solo Chrome desktop 151+ con shader-f16", vramGB:12, f16:true, chrome:151,
@@ -903,7 +903,8 @@ function renderLab(){
       if(!r.ok) fit = '<span class="fit no">WebGPU non disponibile: questo modello non può girare qui.</span>';
       else if(m.f16 && !r.f16) fit = '<span class="fit no">Manca il supporto shader-f16 richiesto.</span>';
       else if(r.chrome && r.chrome < m.chrome) fit = `<span class="fit no">Serve Chrome ${m.chrome} o successivo (hai ${r.chrome}).</span>`;
-      else if(r.maxVram && r.maxVram < m.vramGB) fit = `<span class="fit no">Servono circa ${m.vramGB} GB di memoria video: le schede ${r.family} arrivano al massimo a ${r.maxVram} GB.</span>`;
+      else if(r.maxVram && r.maxVram < m.vramGB && !m.vramEstimate) fit = `<span class="fit no">Servono circa ${m.vramGB} GB di memoria video: le schede ${r.family} arrivano al massimo a ${r.maxVram} GB.</span>`;
+      else if(r.maxVram && r.maxVram < m.vramGB) fit = `<span class="fit warn">A rischio: la stima è di circa ${m.vramGB} GB e le schede ${r.family} ne hanno al massimo ${r.maxVram}. Puoi provarlo, ma potrebbe bloccarsi.</span>`;
       else if(r.bufGB < Math.min(2, m.vramGB / 4)) fit = '<span class="fit warn">Memoria video probabilmente insufficiente: provalo, ma potrebbe bloccarsi.</span>';
       else fit = `<span class="fit ok">Requisiti di base presenti. La memoria video reale si scopre solo provando (servono circa ${m.vramGB} GB).</span>`;
     }
@@ -927,6 +928,8 @@ async function checkGPU(){
     r.vendor = [info.vendor, info.architecture, info.description].filter(Boolean).join(" ");
     const fam = VRAM_MAX.find(([rx]) => rx.test(r.vendor));
     if(fam){ r.maxVram = fam[1]; r.family = fam[2]; }
+    // Sui Mac le AMD GCN 4 (Radeon Pro 450/455/460/555X/560X) hanno al massimo 4 GB
+    if(/Mac/i.test(navigator.platform || navigator.userAgent) && /gcn-4/i.test(r.vendor)){ r.maxVram = 4; r.family = "Radeon Pro 4xx/5xxX dei MacBook Pro"; }
     box.textContent = `WebGPU: disponibile\nScheda: ${r.vendor || "non dichiarata dal browser"}\nshader-f16: ${r.f16 ? "sì" : "no"}${r.family ? `\nFamiglia: ${r.family}, memoria video massima ${r.maxVram} GB` : ""}\nBuffer massimo: ${r.bufGB.toFixed(1)} GB\nBrowser: ${chromeV ? "Chrome/Edge " + chromeV : "non Chromium"}\nLa memoria video totale non è leggibile dal browser.`;
   }catch(e){
     box.textContent = `WebGPU: non disponibile\n${e.message}\nUsa Chrome o Edge aggiornati su computer desktop e attiva l'accelerazione hardware.`;
