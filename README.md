@@ -144,3 +144,8 @@ così questa DAW può restare MIT.
   spostano sulle battute ma l'audio mantiene il tempo originale. Rigenera il loop per adattarlo.
 - Gli effetti del generatore (riverbero, delay) sono semplici e servono per bozze e idee.
 - Testata su Chrome, Edge e Firefox recenti. Safari funziona, con qualche limite su `StereoPanner` nelle versioni vecchie.
+
+
+## Aspetto
+
+Interfaccia nello stile hardware MBStudio: telaio nero, scritte bianche stampate, LED, tasti in gomma. Font Bebas Neue (© Dharma Type) e Antonio (© Vernon Adams) incorporati nella pagina, SIL Open Font License 1.1, quindi funziona anche senza internet. Logo MBSTUDIO91: marchio di MBStudio91.
